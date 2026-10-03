@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Strict CSP: no inline scripts (Vite injects nonce), no third-party requests -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://jsonplaceholder.typicode.com; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Offline-first form, scam message checker, and anonymous sponsor dashboard. Works with no internet." />
+    <meta name="theme-color" content="#087B78" />
+    <title>SafeForm — Offline-First Form &amp; Scam Checker</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
