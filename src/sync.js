@@ -13,8 +13,8 @@ import { db, updateOutboxStatus } from './db.js';
  * Each outbox item has a unique formId so the server can ignore duplicates.
  */
 
-// Placeholder API endpoint (returns 201 for any POST)
-export const API_URL = 'https://jsonplaceholder.typicode.com/posts';
+// Backend API endpoint for complaint sync
+export const API_URL = 'http://localhost:3001/api/complaints';
 
 let isSyncing = false;
 const syncListeners = new Set();
