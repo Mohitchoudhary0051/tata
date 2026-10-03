@@ -12,7 +12,7 @@
 
 import './style.css';
 import { saveDraft, loadDraft, submitToOutbox, getOutboxItems, saveScamReport, getScamReports } from './db.js';
-import { initSyncService, requestSync, syncOutbox } from './sync.js';
+import { initSyncService, requestSync, syncOutbox, syncItemNow } from './sync.js';
 import { checkMessage, VERDICT_COLORS } from './scamChecker.js';
 
 // ─── Internationalisation skeleton ────────────────────────────────────
@@ -241,11 +241,16 @@ function renderFormTab() {
                     ${new Date(item.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
                   </span>
                 </div>
-                <span class="sf-status-badge sf-status-${item.status}">
-                  ${item.status === 'pending' ? '⏳ ' + t('statusPending') : ''}
-                  ${item.status === 'sent' ? '✅ ' + t('statusSent') : ''}
-                  ${item.status === 'failed' ? '❌ ' + t('statusFailed') : ''}
-                </span>
+                <div class="sf-outbox-actions">
+                  <span class="sf-status-badge sf-status-${item.status}">
+                    ${item.status === 'pending' ? '⏳ ' + t('statusPending') : ''}
+                    ${item.status === 'sent' ? '✅ ' + t('statusSent') : ''}
+                    ${item.status === 'failed' ? '❌ ' + t('statusFailed') : ''}
+                  </span>
+                  ${item.status !== 'sent' ? `
+                    <button class="sf-btn-sync-now" data-id="${item.id}" type="button">🔄 Send Now</button>
+                  ` : ''}
+                </div>
               </li>
             `).join('')}
           </ul>
@@ -607,11 +612,25 @@ function attachListeners() {
       };
     }
 
-    // Retry failed items
-    document.querySelectorAll('.sf-outbox-item.sf-outbox-failed').forEach(item => {
-      item.onclick = async () => {
-        await requestSync();
+    // Manual sync for pending or failed items
+    document.querySelectorAll('.sf-btn-sync-now').forEach(btn => {
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        const id = Number(btn.dataset.id);
+        btn.textContent = '⏳ Sending…';
+        btn.disabled = true;
+        await syncItemNow(id);
         render();
+      };
+    });
+
+    document.querySelectorAll('.sf-outbox-item:not(.sf-outbox-sent)').forEach(item => {
+      item.onclick = async () => {
+        const id = Number(item.dataset.outboxId);
+        if (id) {
+          await syncItemNow(id);
+          render();
+        }
       };
     });
   }

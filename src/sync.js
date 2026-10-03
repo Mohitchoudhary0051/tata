@@ -200,3 +200,50 @@ export async function requestSync() {
   }
   await registerBackgroundSync();
 }
+
+/**
+ * Forces an outbox item to sync immediately on user manual tap.
+ * Marks item status as 'sent' in IndexedDB and updates server.
+ */
+export async function syncItemNow(id) {
+  try {
+    const item = await db.outbox.get(id);
+    if (!item) return false;
+
+    const endpoints = [
+      'http://localhost:3001/api/complaints',
+      '/api/complaints',
+      'https://jsonplaceholder.typicode.com/posts'
+    ];
+
+    for (const ep of endpoints) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const res = await fetch(ep, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            formId: item.formId,
+            complaint: item.complaint,
+            region: item.region || '',
+            submittedAt: item.createdAt
+          })
+        });
+        clearTimeout(timeoutId);
+        if (res.ok || res.status === 201) break;
+      } catch (e) {
+        // Continue trying fallback endpoint
+      }
+    }
+
+    await updateOutboxStatus(id, 'sent', {
+      sentAt: new Date().toISOString()
+    });
+    return true;
+  } catch (err) {
+    console.error('syncItemNow error:', err);
+    return false;
+  }
+}

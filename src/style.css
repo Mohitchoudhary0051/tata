@@ -525,6 +525,34 @@ body {
   background: rgba(239, 68, 68, 0.06);
 }
 
+.sf-outbox-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sf-btn-sync-now {
+  background: var(--accent);
+  color: #020617;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.sf-btn-sync-now:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.sf-btn-sync-now:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .sf-outbox-content {
   flex: 1;
   min-width: 0;
