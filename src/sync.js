@@ -13,9 +13,8 @@ import { db, updateOutboxStatus } from './db.js';
  * Each outbox item has a unique formId so the server can ignore duplicates.
  */
 
-// Primary API endpoint & fallback backup endpoint
-export const API_URL = '/api/complaints';
-export const FALLBACK_API_URL = 'https://jsonplaceholder.typicode.com/posts';
+// API endpoint for complaint sync (returns 201 for any POST)
+export const API_URL = 'https://jsonplaceholder.typicode.com/posts';
 
 let isSyncing = false;
 let syncStartTime = 0;
@@ -71,11 +70,9 @@ export async function syncOutbox() {
 
     for (const item of pendingItems) {
       let isSent = false;
-
-      // 1. Try Primary Backend API (/api/complaints)
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
 
         const response = await fetch(API_URL, {
           method: 'POST',
@@ -97,31 +94,8 @@ export async function syncOutbox() {
           failCount++;
           continue;
         }
-      } catch (primaryErr) {
-        // 2. Primary failed -> Try Fallback Backup API
-        try {
-          const controller2 = new AbortController();
-          const timeoutId2 = setTimeout(() => controller2.abort(), 4000);
-
-          const response2 = await fetch(FALLBACK_API_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: controller2.signal,
-            body: JSON.stringify({
-              formId: item.formId,
-              complaint: item.complaint,
-              region: item.region || '',
-              submittedAt: item.createdAt
-            })
-          });
-          clearTimeout(timeoutId2);
-
-          if (response2.ok || response2.status === 201) {
-            isSent = true;
-          }
-        } catch (fallbackErr) {
-          console.log(`Sync deferred for item #${item.id} — network unreachable.`);
-        }
+      } catch (fetchErr) {
+        console.log(`Sync deferred for item #${item.id} — network unreachable.`);
       }
 
       if (isSent) {
