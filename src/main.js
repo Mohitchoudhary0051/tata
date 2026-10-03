@@ -12,7 +12,7 @@
 
 import './style.css';
 import { saveDraft, loadDraft, submitToOutbox, getOutboxItems, saveScamReport, getScamReports } from './db.js';
-import { initSyncService, requestSync, syncOutbox, syncItemNow } from './sync.js';
+import { initSyncService, requestSync, syncOutbox } from './sync.js';
 import { checkMessage, VERDICT_COLORS } from './scamChecker.js';
 
 // ─── Internationalisation skeleton ────────────────────────────────────
@@ -70,7 +70,6 @@ let checkerInput = '';
 let reportSent = false;
 let scamReports = [];
 let draftSaveTimeout = null;
-let lastSubmission = null;
 
 // ─── HTML sanitiser ───────────────────────────────────────────────────
 function esc(str) {
@@ -146,44 +145,9 @@ function renderFormTab() {
   const pendingCount = outboxItems.filter(i => i.status === 'pending').length;
   const failedCount = outboxItems.filter(i => i.status === 'failed').length;
 
-  // Sync state of lastSubmission if item updated in outboxItems
-  if (lastSubmission) {
-    const match = outboxItems.find(i => i.id === lastSubmission.id);
-    if (match && match.status !== lastSubmission.status) {
-      lastSubmission.status = match.status;
-    }
-  }
-
   return `
     <section class="sf-section" aria-labelledby="form-heading">
       <h2 id="form-heading" class="sf-section-title">${t('formTitle')}</h2>
-      
-      ${lastSubmission ? `
-        <div class="sf-status-window sf-status-window-${lastSubmission.status}" role="alert">
-          <div class="sf-status-window-header">
-            <span class="sf-status-window-icon">${lastSubmission.status === 'pending' ? '⏳' : '✅'}</span>
-            <div class="sf-status-window-titles">
-              <strong class="sf-status-window-title">
-                ${lastSubmission.status === 'pending' 
-                  ? 'Form Saved Offline — Status: Pending' 
-                  : 'Form Submitted & Sent — Status: Sent'}
-              </strong>
-              <span class="sf-status-window-subtitle">
-                ${lastSubmission.status === 'pending'
-                  ? 'No internet connection. Saved safely on this phone and will auto-sync when internet returns.'
-                  : 'Your complaint has been successfully uploaded to the server.'}
-              </span>
-            </div>
-            <button class="sf-status-window-close" id="close-status-window" type="button" title="Dismiss notification">✕</button>
-          </div>
-          <div class="sf-status-window-body">
-            <span class="sf-badge ${lastSubmission.status === 'pending' ? 'sf-badge-pending' : 'sf-badge-sent'}">
-              ${lastSubmission.status === 'pending' ? '⏳ Pending Sync' : '✅ Sent'}
-            </span>
-            <span class="sf-status-window-preview">${esc(lastSubmission.complaint.substring(0, 70))}${lastSubmission.complaint.length > 70 ? '…' : ''}</span>
-          </div>
-        </div>
-      ` : ''}
       
       <form id="complaint-form" class="sf-form" novalidate>
         <div class="sf-field">
@@ -241,16 +205,11 @@ function renderFormTab() {
                     ${new Date(item.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
                   </span>
                 </div>
-                <div class="sf-outbox-actions">
-                  <span class="sf-status-badge sf-status-${item.status}">
-                    ${item.status === 'pending' ? '⏳ ' + t('statusPending') : ''}
-                    ${item.status === 'sent' ? '✅ ' + t('statusSent') : ''}
-                    ${item.status === 'failed' ? '❌ ' + t('statusFailed') : ''}
-                  </span>
-                  ${item.status !== 'sent' ? `
-                    <button class="sf-btn-sync-now" data-id="${item.id}" type="button">🔄 Send Now</button>
-                  ` : ''}
-                </div>
+                <span class="sf-status-badge sf-status-${item.status}">
+                  ${item.status === 'pending' ? '⏳ ' + t('statusPending') : ''}
+                  ${item.status === 'sent' ? '✅ ' + t('statusSent') : ''}
+                  ${item.status === 'failed' ? '❌ ' + t('statusFailed') : ''}
+                </span>
               </li>
             `).join('')}
           </ul>
@@ -406,22 +365,17 @@ function renderDashboardTab() {
         <div class="sf-demo-banner">📋 ${t('dashDemo')}</div>
       ` : ''}
 
-      <!-- Dashboard summary cards -->
+      <!-- Synced forms count -->
       <div class="sf-dash-cards">
-        <div class="sf-dash-card">
-          <span class="sf-dash-card-value">${totalForms}</span>
-          <span class="sf-dash-card-label">Forms Filled</span>
-          <span class="sf-dash-card-sub">${syncedCount} sent · ${pendingCount} pending</span>
-        </div>
         <div class="sf-dash-card">
           <span class="sf-dash-card-value">${syncedCount}</span>
           <span class="sf-dash-card-label">${t('dashSynced')}</span>
-          <span class="sf-dash-card-sub">Synced to server</span>
+          <span class="sf-dash-card-sub">${pendingCount} pending · ${totalForms} total</span>
         </div>
         <div class="sf-dash-card">
           <span class="sf-dash-card-value">${reports.length}</span>
           <span class="sf-dash-card-label">${t('dashScamReports')}</span>
-          <span class="sf-dash-card-sub">${sortedTypes.length} types logged</span>
+          <span class="sf-dash-card-sub">${sortedTypes.length} types</span>
         </div>
       </div>
 
@@ -532,32 +486,15 @@ function attachListeners() {
       }
     });
 
-    // Close status notification window
-    const closeBtn = document.getElementById('close-status-window');
-    if (closeBtn) {
-      closeBtn.onclick = () => {
-        lastSubmission = null;
-        render();
-      };
-    }
-
     // Submit form
     if (form) {
       form.onsubmit = async (e) => {
         e.preventDefault();
-        const complaintEl = document.getElementById('field-complaint');
-        const complaint = complaintEl?.value?.trim();
-
+        const complaint = document.getElementById('field-complaint')?.value?.trim();
         if (!complaint) {
-          if (complaintEl) {
-            complaintEl.classList.add('sf-input-error');
-            complaintEl.focus();
-          }
+          document.getElementById('field-complaint')?.focus();
           return;
         }
-
-        // Cancel any pending draft autosave
-        clearTimeout(draftSaveTimeout);
 
         const data = {
           name: document.getElementById('field-name')?.value?.trim() || '',
@@ -566,71 +503,24 @@ function attachListeners() {
           region: document.getElementById('field-region')?.value?.trim() || ''
         };
 
-        // 1. Save to IndexedDB outbox & clear draft
-        const record = await submitToOutbox(data);
+        await submitToOutbox(data);
+        await requestSync();
 
-        // 2. Clear input values in DOM immediately
-        const nameEl = document.getElementById('field-name');
-        const phoneEl = document.getElementById('field-phone');
-        const regionEl = document.getElementById('field-region');
-        if (nameEl) nameEl.value = '';
-        if (phoneEl) phoneEl.value = '';
-        if (complaintEl) {
-          complaintEl.value = '';
-          complaintEl.classList.remove('sf-input-error');
-        }
-        if (regionEl) regionEl.value = '';
+        // Clear form fields
+        document.getElementById('field-name').value = '';
+        document.getElementById('field-phone').value = '';
+        document.getElementById('field-complaint').value = '';
+        document.getElementById('field-region').value = '';
 
-        // 3. Instantly set state to Pending & render UI immediately
-        lastSubmission = {
-          id: record.id,
-          status: 'pending',
-          complaint: data.complaint,
-          region: data.region,
-          createdAt: new Date()
-        };
-
-        // Render immediately so user instantly sees "Pending" status card & outbox item
-        await render();
-
-        // Scroll to status alert smoothly
-        setTimeout(() => {
-          const alertEl = document.querySelector('.sf-status-window');
-          if (alertEl) alertEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }, 50);
-
-        // 4. Trigger background sync without blocking UI rendering
-        if (navigator.onLine) {
-          syncOutbox().then(syncRes => {
-            if (syncRes && syncRes.successCount > 0) {
-              render();
-            }
-          });
-        } else {
-          requestSync();
-        }
+        render();
       };
     }
 
-    // Manual sync for pending or failed items
-    document.querySelectorAll('.sf-btn-sync-now').forEach(btn => {
-      btn.onclick = async (e) => {
-        e.stopPropagation();
-        const id = Number(btn.dataset.id);
-        btn.textContent = '⏳ Sending…';
-        btn.disabled = true;
-        await syncItemNow(id);
-        render();
-      };
-    });
-
-    document.querySelectorAll('.sf-outbox-item:not(.sf-outbox-sent)').forEach(item => {
+    // Retry failed items
+    document.querySelectorAll('.sf-outbox-item.sf-outbox-failed').forEach(item => {
       item.onclick = async () => {
-        const id = Number(item.dataset.outboxId);
-        if (id) {
-          await syncItemNow(id);
-          render();
-        }
+        await requestSync();
+        render();
       };
     });
   }
@@ -676,15 +566,10 @@ function attachListeners() {
   }
 }
 
-// ─── Online/Offline tracking & Automatic Sync ──────────────────────────
-window.addEventListener('online', async () => {
+// ─── Online/Offline tracking ──────────────────────────────────────────
+window.addEventListener('online', () => {
   isOnline = true;
-  await syncOutbox();
   render();
-
-  // Multi-pass reconnection checks to catch socket reconnection delay
-  setTimeout(async () => { await syncOutbox(); render(); }, 1200);
-  setTimeout(async () => { await syncOutbox(); render(); }, 2800);
 });
 
 window.addEventListener('offline', () => {
@@ -692,20 +577,10 @@ window.addEventListener('offline', () => {
   render();
 });
 
-// Periodic background auto-sync timer (polls every 2 seconds)
-setInterval(async () => {
-  if (navigator.onLine) {
-    const res = await syncOutbox();
-    if (res && res.successCount > 0) {
-      render();
-    }
-  }
-}, 2000);
-
 // ─── Initialise ───────────────────────────────────────────────────────
-initSyncService(async (status) => {
-  // Always update outbox items & re-render on sync completion or network event
-  if (status.status === 'completed' || status.status === 'online' || status.status === 'error') {
+initSyncService((status) => {
+  // Re-render when sync state changes to update badges
+  if (status.status === 'completed' || status.status === 'error') {
     render();
   }
 });

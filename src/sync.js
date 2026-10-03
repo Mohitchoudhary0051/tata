@@ -13,11 +13,10 @@ import { db, updateOutboxStatus } from './db.js';
  * Each outbox item has a unique formId so the server can ignore duplicates.
  */
 
-// API endpoint for complaint sync (returns 201 for any POST)
+// Placeholder API endpoint (returns 201 for any POST)
 export const API_URL = 'https://jsonplaceholder.typicode.com/posts';
 
 let isSyncing = false;
-let syncStartTime = 0;
 const syncListeners = new Set();
 
 export function onSyncStateChange(listener) {
@@ -35,11 +34,6 @@ function notifySync(status, details = {}) {
  * On failure: marks item as 'failed' (user can retry).
  */
 export async function syncOutbox() {
-  // Auto-reset lock if stuck for more than 8 seconds
-  if (isSyncing && Date.now() - syncStartTime > 8000) {
-    isSyncing = false;
-  }
-
   if (isSyncing) {
     return { skipped: true, reason: 'Already syncing' };
   }
@@ -50,34 +44,28 @@ export async function syncOutbox() {
   }
 
   isSyncing = true;
-  syncStartTime = Date.now();
   notifySync('syncing');
 
-  let successCount = 0;
-  let failCount = 0;
-
   try {
-    // Fetch items that need syncing (pending or failed)
     const pendingItems = await db.outbox
       .where('status')
       .anyOf('pending', 'failed')
       .toArray();
 
     if (pendingItems.length === 0) {
+      isSyncing = false;
       notifySync('idle', { count: 0 });
       return { success: true, count: 0 };
     }
 
-    for (const item of pendingItems) {
-      let isSent = false;
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+    let successCount = 0;
+    let failCount = 0;
 
+    for (const item of pendingItems) {
+      try {
         const response = await fetch(API_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
           body: JSON.stringify({
             formId: item.formId,       // unique ID for deduplication
             complaint: item.complaint,
@@ -85,35 +73,31 @@ export async function syncOutbox() {
             submittedAt: item.createdAt
           })
         });
-        clearTimeout(timeoutId);
 
         if (response.ok || response.status === 201) {
-          isSent = true;
-        } else if (response.status >= 400 && response.status < 500) {
+          await updateOutboxStatus(item.id, 'sent', {
+            sentAt: new Date().toISOString()
+          });
+          successCount++;
+        } else {
           await updateOutboxStatus(item.id, 'failed');
           failCount++;
-          continue;
         }
-      } catch (fetchErr) {
-        console.log(`Sync deferred for item #${item.id} — network unreachable.`);
-      }
-
-      if (isSent) {
-        await updateOutboxStatus(item.id, 'sent', {
-          sentAt: new Date().toISOString()
-        });
-        successCount++;
+      } catch (itemErr) {
+        console.warn(`Sync failed for item #${item.id}:`, itemErr);
+        await updateOutboxStatus(item.id, 'failed');
+        failCount++;
       }
     }
 
+    isSyncing = false;
     notifySync('completed', { successCount, failCount });
     return { success: true, successCount, failCount };
   } catch (err) {
-    console.warn('syncOutbox notice:', err);
+    console.error('syncOutbox error:', err);
+    isSyncing = false;
     notifySync('error', { error: err.message });
     return { success: false, error: err.message };
-  } finally {
-    isSyncing = false;
   }
 }
 
@@ -148,13 +132,11 @@ export function initSyncService(onStatusUpdate) {
     syncOutbox();
   }
 
-  // 2. Sync when connectivity is restored (multi-pass sequence to handle socket startup delay)
-  window.addEventListener('online', async () => {
-    console.log('App came online, triggering automatic multi-pass sync...');
+  // 2. Sync when connectivity is restored
+  window.addEventListener('online', () => {
+    console.log('App came online, triggering sync...');
     notifySync('online');
-    await syncOutbox();
-    setTimeout(() => syncOutbox(), 1000);
-    setTimeout(() => syncOutbox(), 2500);
+    syncOutbox();
   });
 
   window.addEventListener('offline', () => {
@@ -175,51 +157,4 @@ export async function requestSync() {
     await syncOutbox();
   }
   await registerBackgroundSync();
-}
-
-/**
- * Forces an outbox item to sync immediately on user manual tap.
- * Marks item status as 'sent' in IndexedDB and updates server.
- */
-export async function syncItemNow(id) {
-  try {
-    const item = await db.outbox.get(id);
-    if (!item) return false;
-
-    const endpoints = [
-      'http://localhost:3001/api/complaints',
-      '/api/complaints',
-      'https://jsonplaceholder.typicode.com/posts'
-    ];
-
-    for (const ep of endpoints) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000);
-        const res = await fetch(ep, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            formId: item.formId,
-            complaint: item.complaint,
-            region: item.region || '',
-            submittedAt: item.createdAt
-          })
-        });
-        clearTimeout(timeoutId);
-        if (res.ok || res.status === 201) break;
-      } catch (e) {
-        // Continue trying fallback endpoint
-      }
-    }
-
-    await updateOutboxStatus(id, 'sent', {
-      sentAt: new Date().toISOString()
-    });
-    return true;
-  } catch (err) {
-    console.error('syncItemNow error:', err);
-    return false;
-  }
 }
