@@ -70,6 +70,7 @@ let checkerInput = '';
 let reportSent = false;
 let scamReports = [];
 let draftSaveTimeout = null;
+let lastSubmission = null;
 
 // ─── HTML sanitiser ───────────────────────────────────────────────────
 function esc(str) {
@@ -145,9 +146,44 @@ function renderFormTab() {
   const pendingCount = outboxItems.filter(i => i.status === 'pending').length;
   const failedCount = outboxItems.filter(i => i.status === 'failed').length;
 
+  // Sync state of lastSubmission if item updated in outboxItems
+  if (lastSubmission) {
+    const match = outboxItems.find(i => i.id === lastSubmission.id);
+    if (match && match.status !== lastSubmission.status) {
+      lastSubmission.status = match.status;
+    }
+  }
+
   return `
     <section class="sf-section" aria-labelledby="form-heading">
       <h2 id="form-heading" class="sf-section-title">${t('formTitle')}</h2>
+      
+      ${lastSubmission ? `
+        <div class="sf-status-window sf-status-window-${lastSubmission.status}" role="alert">
+          <div class="sf-status-window-header">
+            <span class="sf-status-window-icon">${lastSubmission.status === 'pending' ? '⏳' : '✅'}</span>
+            <div class="sf-status-window-titles">
+              <strong class="sf-status-window-title">
+                ${lastSubmission.status === 'pending' 
+                  ? 'Form Saved Offline — Status: Pending' 
+                  : 'Form Submitted & Sent — Status: Sent'}
+              </strong>
+              <span class="sf-status-window-subtitle">
+                ${lastSubmission.status === 'pending'
+                  ? 'No internet connection. Saved safely on this phone and will auto-sync when internet returns.'
+                  : 'Your complaint has been successfully uploaded to the server.'}
+              </span>
+            </div>
+            <button class="sf-status-window-close" id="close-status-window" type="button" title="Dismiss notification">✕</button>
+          </div>
+          <div class="sf-status-window-body">
+            <span class="sf-badge ${lastSubmission.status === 'pending' ? 'sf-badge-pending' : 'sf-badge-sent'}">
+              ${lastSubmission.status === 'pending' ? '⏳ Pending Sync' : '✅ Sent'}
+            </span>
+            <span class="sf-status-window-preview">${esc(lastSubmission.complaint.substring(0, 70))}${lastSubmission.complaint.length > 70 ? '…' : ''}</span>
+          </div>
+        </div>
+      ` : ''}
       
       <form id="complaint-form" class="sf-form" novalidate>
         <div class="sf-field">
@@ -486,6 +522,15 @@ function attachListeners() {
       }
     });
 
+    // Close status notification window
+    const closeBtn = document.getElementById('close-status-window');
+    if (closeBtn) {
+      closeBtn.onclick = () => {
+        lastSubmission = null;
+        render();
+      };
+    }
+
     // Submit form
     if (form) {
       form.onsubmit = async (e) => {
@@ -512,7 +557,7 @@ function attachListeners() {
         };
 
         // Save to IndexedDB outbox & clear draft
-        await submitToOutbox(data);
+        const record = await submitToOutbox(data);
 
         // Clear input values in DOM immediately
         const nameEl = document.getElementById('field-name');
@@ -526,14 +571,32 @@ function attachListeners() {
         }
         if (regionEl) regionEl.value = '';
 
+        let isSynced = false;
         // Immediately sync if online
         if (navigator.onLine) {
-          await syncOutbox();
+          const syncRes = await syncOutbox();
+          if (syncRes && syncRes.successCount > 0) {
+            isSynced = true;
+          }
         } else {
           await requestSync();
         }
 
+        lastSubmission = {
+          id: record.id,
+          status: isSynced ? 'sent' : 'pending',
+          complaint: data.complaint,
+          region: data.region,
+          createdAt: new Date()
+        };
+
         render();
+
+        // Scroll to status alert smoothly
+        setTimeout(() => {
+          const alertEl = document.querySelector('.sf-status-window');
+          if (alertEl) alertEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 50);
       };
     }
 
