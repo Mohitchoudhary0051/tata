@@ -47,7 +47,7 @@ export async function syncOutbox() {
   notifySync('syncing');
 
   try {
-    // Sync pending items (and failed items if retried)
+    // Fetch items that need syncing (pending or failed)
     const pendingItems = await db.outbox
       .where('status')
       .anyOf('pending', 'failed')
@@ -63,10 +63,9 @@ export async function syncOutbox() {
     let failCount = 0;
 
     for (const item of pendingItems) {
-      let isSent = false;
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6000);
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
 
         const response = await fetch(API_URL, {
           method: 'POST',
@@ -82,27 +81,20 @@ export async function syncOutbox() {
         clearTimeout(timeoutId);
 
         if (response.ok || response.status === 201) {
-          isSent = true;
+          // Successfully uploaded to server -> mark as sent
+          await updateOutboxStatus(item.id, 'sent', {
+            sentAt: new Date().toISOString()
+          });
+          successCount++;
         } else if (response.status >= 400 && response.status < 500) {
-          // Client payload error
+          // Client payload error -> mark as failed
           await updateOutboxStatus(item.id, 'failed');
           failCount++;
-        } else {
-          // Server error 5xx: keep as pending for next retry
-          isSent = true;
         }
+        // For 5xx server error, leave status as 'pending' to retry when connection improves
       } catch (fetchErr) {
-        // Network offline / CORS / DNS failure / timeout fallback:
-        // On online sync attempt, mark items as synced successfully in offline mode
-        console.log(`Sync connection note (${fetchErr.message}). Marking outbox item #${item.id} as sent.`);
-        isSent = true;
-      }
-
-      if (isSent) {
-        await updateOutboxStatus(item.id, 'sent', {
-          sentAt: new Date().toISOString()
-        });
-        successCount++;
+        // Network offline / unreachable -> leave status as 'pending'
+        console.log(`Network offline/unreachable for item #${item.id}. Retaining Pending status.`);
       }
     }
 
