@@ -688,21 +688,20 @@ window.addEventListener('offline', () => {
   render();
 });
 
-// Periodic sync poll for reliable offline -> online transition
+// Periodic background auto-sync timer (polls every 3 seconds)
 setInterval(async () => {
   if (navigator.onLine) {
-    const hasPending = outboxItems.some(i => i.status === 'pending' || i.status === 'failed');
-    if (hasPending) {
-      await syncOutbox();
+    const res = await syncOutbox();
+    if (res && res.successCount > 0) {
       render();
     }
   }
-}, 4000);
+}, 3000);
 
 // ─── Initialise ───────────────────────────────────────────────────────
-initSyncService((status) => {
-  // Re-render when sync state changes to update badges
-  if (status.status === 'completed' || status.status === 'error' || status.status === 'online') {
+initSyncService(async (status) => {
+  // Always update outbox items & re-render on sync completion or network event
+  if (status.status === 'completed' || status.status === 'online' || status.status === 'error') {
     render();
   }
 });
