@@ -556,10 +556,10 @@ function attachListeners() {
           region: document.getElementById('field-region')?.value?.trim() || ''
         };
 
-        // Save to IndexedDB outbox & clear draft
+        // 1. Save to IndexedDB outbox & clear draft
         const record = await submitToOutbox(data);
 
-        // Clear input values in DOM immediately
+        // 2. Clear input values in DOM immediately
         const nameEl = document.getElementById('field-name');
         const phoneEl = document.getElementById('field-phone');
         const regionEl = document.getElementById('field-region');
@@ -571,32 +571,34 @@ function attachListeners() {
         }
         if (regionEl) regionEl.value = '';
 
-        let isSynced = false;
-        // Immediately sync if online
-        if (navigator.onLine) {
-          const syncRes = await syncOutbox();
-          if (syncRes && syncRes.successCount > 0) {
-            isSynced = true;
-          }
-        } else {
-          await requestSync();
-        }
-
+        // 3. Instantly set state to Pending & render UI immediately
         lastSubmission = {
           id: record.id,
-          status: isSynced ? 'sent' : 'pending',
+          status: 'pending',
           complaint: data.complaint,
           region: data.region,
           createdAt: new Date()
         };
 
-        render();
+        // Render immediately so user instantly sees "Pending" status card & outbox item
+        await render();
 
         // Scroll to status alert smoothly
         setTimeout(() => {
           const alertEl = document.querySelector('.sf-status-window');
           if (alertEl) alertEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }, 50);
+
+        // 4. Trigger background sync without blocking UI rendering
+        if (navigator.onLine) {
+          syncOutbox().then(syncRes => {
+            if (syncRes && syncRes.successCount > 0) {
+              render();
+            }
+          });
+        } else {
+          requestSync();
+        }
       };
     }
 
