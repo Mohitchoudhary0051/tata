@@ -148,11 +148,13 @@ export function initSyncService(onStatusUpdate) {
     syncOutbox();
   }
 
-  // 2. Sync when connectivity is restored
-  window.addEventListener('online', () => {
-    console.log('App came online, triggering sync...');
+  // 2. Sync when connectivity is restored (multi-pass sequence to handle socket startup delay)
+  window.addEventListener('online', async () => {
+    console.log('App came online, triggering automatic multi-pass sync...');
     notifySync('online');
-    syncOutbox();
+    await syncOutbox();
+    setTimeout(() => syncOutbox(), 1000);
+    setTimeout(() => syncOutbox(), 2500);
   });
 
   window.addEventListener('offline', () => {

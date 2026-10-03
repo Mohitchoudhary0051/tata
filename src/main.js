@@ -681,6 +681,10 @@ window.addEventListener('online', async () => {
   isOnline = true;
   await syncOutbox();
   render();
+
+  // Multi-pass reconnection checks to catch socket reconnection delay
+  setTimeout(async () => { await syncOutbox(); render(); }, 1200);
+  setTimeout(async () => { await syncOutbox(); render(); }, 2800);
 });
 
 window.addEventListener('offline', () => {
@@ -688,7 +692,7 @@ window.addEventListener('offline', () => {
   render();
 });
 
-// Periodic background auto-sync timer (polls every 3 seconds)
+// Periodic background auto-sync timer (polls every 2 seconds)
 setInterval(async () => {
   if (navigator.onLine) {
     const res = await syncOutbox();
@@ -696,7 +700,7 @@ setInterval(async () => {
       render();
     }
   }
-}, 3000);
+}, 2000);
 
 // ─── Initialise ───────────────────────────────────────────────────────
 initSyncService(async (status) => {
