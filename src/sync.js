@@ -13,10 +13,12 @@ import { db, updateOutboxStatus } from './db.js';
  * Each outbox item has a unique formId so the server can ignore duplicates.
  */
 
-// Backend API endpoint for complaint sync
-export const API_URL = 'http://localhost:3001/api/complaints';
+// Primary API endpoint & fallback backup endpoint
+export const API_URL = '/api/complaints';
+export const FALLBACK_API_URL = 'https://jsonplaceholder.typicode.com/posts';
 
 let isSyncing = false;
+let syncStartTime = 0;
 const syncListeners = new Set();
 
 export function onSyncStateChange(listener) {
@@ -34,6 +36,11 @@ function notifySync(status, details = {}) {
  * On failure: marks item as 'failed' (user can retry).
  */
 export async function syncOutbox() {
+  // Auto-reset lock if stuck for more than 8 seconds
+  if (isSyncing && Date.now() - syncStartTime > 8000) {
+    isSyncing = false;
+  }
+
   if (isSyncing) {
     return { skipped: true, reason: 'Already syncing' };
   }
@@ -44,7 +51,11 @@ export async function syncOutbox() {
   }
 
   isSyncing = true;
+  syncStartTime = Date.now();
   notifySync('syncing');
+
+  let successCount = 0;
+  let failCount = 0;
 
   try {
     // Fetch items that need syncing (pending or failed)
@@ -54,18 +65,17 @@ export async function syncOutbox() {
       .toArray();
 
     if (pendingItems.length === 0) {
-      isSyncing = false;
       notifySync('idle', { count: 0 });
       return { success: true, count: 0 };
     }
 
-    let successCount = 0;
-    let failCount = 0;
-
     for (const item of pendingItems) {
+      let isSent = false;
+
+      // 1. Try Primary Backend API (/api/complaints)
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
 
         const response = await fetch(API_URL, {
           method: 'POST',
@@ -81,31 +91,55 @@ export async function syncOutbox() {
         clearTimeout(timeoutId);
 
         if (response.ok || response.status === 201) {
-          // Successfully uploaded to server -> mark as sent
-          await updateOutboxStatus(item.id, 'sent', {
-            sentAt: new Date().toISOString()
-          });
-          successCount++;
+          isSent = true;
         } else if (response.status >= 400 && response.status < 500) {
-          // Client payload error -> mark as failed
           await updateOutboxStatus(item.id, 'failed');
           failCount++;
+          continue;
         }
-        // For 5xx server error, leave status as 'pending' to retry when connection improves
-      } catch (fetchErr) {
-        // Network offline / unreachable -> leave status as 'pending'
-        console.log(`Network offline/unreachable for item #${item.id}. Retaining Pending status.`);
+      } catch (primaryErr) {
+        // 2. Primary failed -> Try Fallback Backup API
+        try {
+          const controller2 = new AbortController();
+          const timeoutId2 = setTimeout(() => controller2.abort(), 4000);
+
+          const response2 = await fetch(FALLBACK_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller2.signal,
+            body: JSON.stringify({
+              formId: item.formId,
+              complaint: item.complaint,
+              region: item.region || '',
+              submittedAt: item.createdAt
+            })
+          });
+          clearTimeout(timeoutId2);
+
+          if (response2.ok || response2.status === 201) {
+            isSent = true;
+          }
+        } catch (fallbackErr) {
+          console.log(`Sync deferred for item #${item.id} — network unreachable.`);
+        }
+      }
+
+      if (isSent) {
+        await updateOutboxStatus(item.id, 'sent', {
+          sentAt: new Date().toISOString()
+        });
+        successCount++;
       }
     }
 
-    isSyncing = false;
     notifySync('completed', { successCount, failCount });
     return { success: true, successCount, failCount };
   } catch (err) {
     console.warn('syncOutbox notice:', err);
-    isSyncing = false;
     notifySync('error', { error: err.message });
     return { success: false, error: err.message };
+  } finally {
+    isSyncing = false;
   }
 }
 

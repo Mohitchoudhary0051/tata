@@ -401,17 +401,22 @@ function renderDashboardTab() {
         <div class="sf-demo-banner">📋 ${t('dashDemo')}</div>
       ` : ''}
 
-      <!-- Synced forms count -->
+      <!-- Dashboard summary cards -->
       <div class="sf-dash-cards">
+        <div class="sf-dash-card">
+          <span class="sf-dash-card-value">${totalForms}</span>
+          <span class="sf-dash-card-label">Forms Filled</span>
+          <span class="sf-dash-card-sub">${syncedCount} sent · ${pendingCount} pending</span>
+        </div>
         <div class="sf-dash-card">
           <span class="sf-dash-card-value">${syncedCount}</span>
           <span class="sf-dash-card-label">${t('dashSynced')}</span>
-          <span class="sf-dash-card-sub">${pendingCount} pending · ${totalForms} total</span>
+          <span class="sf-dash-card-sub">Synced to server</span>
         </div>
         <div class="sf-dash-card">
           <span class="sf-dash-card-value">${reports.length}</span>
           <span class="sf-dash-card-label">${t('dashScamReports')}</span>
-          <span class="sf-dash-card-sub">${sortedTypes.length} types</span>
+          <span class="sf-dash-card-sub">${sortedTypes.length} types logged</span>
         </div>
       </div>
 
